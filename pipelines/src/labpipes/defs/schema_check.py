@@ -46,7 +46,7 @@ def schema_contract(
     passed = len(mismatches) == 0
     return dg.AssetCheckResult(
         passed=passed,
-        severity=dg.AssetCheckSeverity.ERROR if not passed else None,
+        severity=dg.AssetCheckSeverity.ERROR,
         description="Parquet schema matches contract" if passed else f"{len(mismatches)} schema mismatches found",
         metadata={
             "mismatches": dg.MetadataValue.json(mismatches),
