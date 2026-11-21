@@ -34,20 +34,19 @@ for _ in {1..30}; do
   sleep 5
 done
 
-RUNNER_VERSION="2.322.0"
+RUNNER_VERSION="2.338.2"
 script=$(cat <<EOF
 set -euo pipefail
 
 cd /opt/actions-runner
-if [ ! -f ./config.sh ]; then
-  curl -fsSL -o runner.tar.gz "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz"
-  tar xzf runner.tar.gz
-  rm -f runner.tar.gz
-  chown -R runner:runner /opt/actions-runner
-fi
-
 ./svc.sh stop 2>/dev/null || true
 ./svc.sh uninstall 2>/dev/null || true
+rm -rf /opt/actions-runner/*
+
+curl -fsSL -o runner.tar.gz "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz"
+tar xzf runner.tar.gz
+rm -f runner.tar.gz
+chown -R runner:runner /opt/actions-runner
 
 su - runner -c "cd /opt/actions-runner && ./config.sh --url https://github.com/${repo} --token ${token} --name ${label} --labels ${label} --unattended --replace"
 cd /opt/actions-runner
