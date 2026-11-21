@@ -34,8 +34,10 @@ LATENCY_BUDGET_MS = 50.0
           description="UNLOAD the training window and holdout month from Redshift to the artifact bucket.")
 def training_set(redshift: RedshiftData, artifacts: ArtifactBucket) -> dg.MaterializeResult:
     """UNLOAD trip_features for train months and holdout to S3 as Parquet."""
-    months_sql = ", ".join(f"''{m}''" for m in TRAIN_MONTHS)
-    holdout_sql = f"''{HOLDOUT_MONTH}''"
+    months_unload = ", ".join(f"''{m}''" for m in TRAIN_MONTHS)
+    holdout_unload = f"''{HOLDOUT_MONTH}''"
+    months_query = ", ".join(f"'{m}'" for m in TRAIN_MONTHS)
+    holdout_query = f"'{HOLDOUT_MONTH}'"
 
     train_prefix = "training/train/"
     holdout_prefix = "training/holdout/"
@@ -47,28 +49,28 @@ def training_set(redshift: RedshiftData, artifacts: ArtifactBucket) -> dg.Materi
 
     redshift.execute(
         f"unload ('select pickup_zone_id, dropoff_zone_id, pickup_hour, pickup_dow, duration_min "
-        f"from staging.trip_features where trip_month in ({months_sql})') "
+        f"from staging.trip_features where trip_month in ({months_unload})') "
         f"to '{train_uri}' iam_role default format as parquet allowoverwrite",
     )
     redshift.execute(
         f"unload ('select pickup_zone_id, dropoff_zone_id, pickup_hour, pickup_dow, duration_min "
-        f"from staging.trip_features where trip_month = ({holdout_sql})') "
+        f"from staging.trip_features where trip_month = {holdout_unload}') "
         f"to '{holdout_uri}' iam_role default format as parquet allowoverwrite",
     )
     # Zone-pair distance lookup: median trip_distance from the training window (from stg_trips)
     redshift.execute(
         f"unload ('select pickup_zone_id, dropoff_zone_id, median(trip_distance) as est_distance_miles "
-        f"from staging.stg_trips where trip_month in ({months_sql}) "
+        f"from staging.stg_trips where trip_month in ({months_unload}) "
         f"and pickup_zone_id between 1 and 263 and dropoff_zone_id between 1 and 263 "
         f"group by pickup_zone_id, dropoff_zone_id') "
         f"to '{dist_uri}' iam_role default format as parquet allowoverwrite",
     )
 
     train_rows = redshift.scalar(
-        f"select count(*) from staging.trip_features where trip_month in ({months_sql})"
+        f"select count(*) from staging.trip_features where trip_month in ({months_query})"
     )
     holdout_rows = redshift.scalar(
-        f"select count(*) from staging.trip_features where trip_month = ({holdout_sql})"
+        f"select count(*) from staging.trip_features where trip_month = {holdout_query}"
     )
     return dg.MaterializeResult(metadata={
         "training_window": TRAINING_WINDOW,
