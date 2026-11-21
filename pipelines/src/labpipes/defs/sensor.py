@@ -13,8 +13,8 @@ from ..resources import DataBucket
 
 ingest_job = dg.define_asset_job(
     "ingest_month",
-    selection=dg.AssetSelection.assets("trip_files", "raw_trips", "stg_trips", "zone_hour_stats"),
-    description="Ingest one month from S3 into Redshift and rebuild zone_hour_stats mart.",
+    selection=dg.AssetSelection.assets("trip_files", "raw_trips", "stg_trips", "trip_features", "zone_hour_stats"),
+    description="Ingest one month from S3 into Redshift, build features, and rebuild zone_hour_stats mart.",
 )
 
 

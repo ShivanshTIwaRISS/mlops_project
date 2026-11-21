@@ -39,3 +39,9 @@ variable "github_repo" {
   default     = null
   description = "Your lab repo as owner/name. The notebook (S2) clones it; the repo is public."
 }
+
+variable "lab_data_bucket" {
+  type        = string
+  default     = "nst-mlops-2026"
+  description = "The instructor's public TLC data bucket (read-only by LabRole)."
+}
