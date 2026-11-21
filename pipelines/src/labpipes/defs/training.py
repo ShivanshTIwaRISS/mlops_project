@@ -220,7 +220,7 @@ def beats_champion(tracking: MlflowTracking) -> dg.AssetCheckResult:
     versions = client.search_model_versions(f"name='{contract['registered_model']}'")
     latest = max(versions, key=lambda v: int(v.version))
 
-    tags = {t.key: t.value for t in latest.tags}
+    tags = latest.tags or {}
     new_mae = float(tags.get("mae_min", "inf"))
     champion_mae = float(tags.get("champion_mae_min", "inf"))
     p95_latency = float(tags.get("p95_latency_ms", "inf"))
@@ -277,7 +277,7 @@ def challenger(tracking: MlflowTracking) -> dg.MaterializeResult:
         contract["registered_model"], "challenger", latest.version
     )
 
-    tags = {t.key: t.value for t in latest.tags}
+    tags = latest.tags or {}
     return dg.MaterializeResult(metadata={
         "version": dg.MetadataValue.int(int(latest.version)),
         "alias": "challenger",
