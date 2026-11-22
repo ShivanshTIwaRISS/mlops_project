@@ -5,6 +5,11 @@ on:
     workflows: ["ci"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      rollback:
+        description: "Roll back to the other colour without deploying"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,27 +27,81 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v7.0.1
+
+      - name: Roll back
+        if: ${{ inputs.rollback }}
+        run: |
+          live=$(deploy/web.sh live)
+          if [ "$live" = "blue" ]; then
+            target="green"
+          elif [ "$live" = "green" ]; then
+            target="blue"
+          else
+            echo "Cannot roll back: no colour is currently live ($live)" >&2
+            exit 1
+          fi
+          echo "Rolling back traffic from $live to $target..."
+          deploy/web.sh switch "$target"
+          deploy/web.sh smoke "$target"
+          deploy/web.sh status
+
       - name: Resolve image tag
+        if: ${{ !inputs.rollback }}
         id: img
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             head_sha="${{ github.event.workflow_run.head_sha }}"
             echo "tag=sha-${head_sha:0:7}" >> "$GITHUB_OUTPUT"
+            echo "sha=${head_sha}" >> "$GITHUB_OUTPUT"
           else
             echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           fi
+
       - uses: docker/login-action@v4.6.0
+        if: ${{ !inputs.rollback }}
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Deploy app
+
+      - name: Deploy app (blue-green)
+        if: ${{ !inputs.rollback }}
         run: |
           export IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY,,}"
-          export IMAGE_TAG="${{ steps.img.outputs.tag }}"
-          docker compose -f deploy/compose.app.yaml pull
-          docker compose -f deploy/compose.app.yaml up -d --wait
-      - name: Smoke test
-        run: |
-          curl -fsS http://127.0.0.1/version
+          deploy/web.sh prepare
 
+          live=$(deploy/web.sh live)
+          if [ "$live" = "blue" ]; then
+            target="green"
+            other="blue"
+          else
+            target="blue"
+            other="green"
+          fi
+
+          other_tag=$(deploy/web.sh tag "$other")
+          if [ "$other_tag" = "none" ] || [ -z "$other_tag" ]; then
+            other_tag="${{ steps.img.outputs.tag }}"
+          fi
+
+          if [ "$target" = "blue" ]; then
+            export BLUE_TAG="${{ steps.img.outputs.tag }}"
+            export GREEN_TAG="$other_tag"
+          else
+            export GREEN_TAG="${{ steps.img.outputs.tag }}"
+            export BLUE_TAG="$other_tag"
+          fi
+
+          echo "Deploying to $target with tag ${{ steps.img.outputs.tag }} (keeping $other on $other_tag)"
+          docker compose -f deploy/compose.web.yaml pull "app-$target"
+          docker compose -f deploy/compose.web.yaml up -d --remove-orphans "app-$target"
+
+          echo "Running smoke test on $target..."
+          deploy/web.sh smoke "$target" "${{ steps.img.outputs.sha }}"
+
+          echo "Switching live traffic to $target..."
+          deploy/web.sh switch "$target"
+
+          echo "Blue-green deployment complete. Current status:"
+          deploy/web.sh status

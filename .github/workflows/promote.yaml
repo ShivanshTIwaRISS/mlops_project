@@ -1,0 +1,59 @@
+# Promotion (S3): promote the challenger (or a version you name) to champion.
+# Runs on the app host (self-hosted runner) in the approval-gated production environment.
+# Push-free: workflow_dispatch only.
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Model version to promote (leave empty for current challenger)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-champion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: [self-hosted, lab-app]
+    environment: production
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Promote in MLflow
+        env:
+          MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+          TARGET_VERSION: ${{ inputs.version }}
+        run: |
+          docker exec -i \
+            -e MLFLOW_TRACKING_URI="$MLFLOW_TRACKING_URI" \
+            -e TARGET_VERSION="$TARGET_VERSION" \
+            lab-serving-serving-champion-1 python < scripts/promote.py
+
+      - name: Hot-reload serving-champion
+        run: |
+          deploy/web.sh reload champion
+
+      - name: Verify predict answers with champion
+        run: |
+          for i in {1..20}; do
+            resp=$(curl -fsS -H 'Content-Type: application/json' http://127.0.0.1/predict \
+              -d '{"pickup_zone_id": 132, "dropoff_zone_id": 230, "pickup_datetime": "2024-03-08T17:05:00"}' || true)
+            echo "Predict response: $resp"
+            alias=$(jq -r '.model.alias // empty' <<<"$resp" 2>/dev/null || true)
+            if [ "$alias" = "champion" ]; then
+              echo "Verified: /predict is answering with alias 'champion'!"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Predict did not quote with champion model: $resp" >&2
+          exit 1
+
+      - name: Status
+        run: deploy/web.sh status
