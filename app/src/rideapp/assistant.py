@@ -174,13 +174,21 @@ def build_messages(question: str, chunks: list[Chunk]) -> list[dict]:
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_content}]
 
 
-ALLOWED_TOOLS: set[str] = set()  # S7: which of the MCP server's tools the assistant may call
-TOOLS_PROMPT = ""  # S7: when to use which tool
+ALLOWED_TOOLS: set[str] = {"get_model_info", "predict_duration", "query_zone_stats"}  # S7: which of the MCP server's tools the assistant may call
+TOOLS_PROMPT = """
+
+You have access to tools to help answer rider queries:
+- get_model_info(): Use when asked about model version, training window, or performance metrics.
+- predict_duration(pickup_zone, dropoff_zone, hour, day_of_week): Use when asked to estimate trip duration or travel time between two TLC taxi zones at a specific hour and day of week.
+- query_zone_stats(zone, metric, hour): Use when asked for historical aggregate statistics (trip_count, median_duration_min, p90_duration_min) for a TLC taxi zone.
+"""
 
 
 def allow_tool_call(name: str, arguments: dict, question: str) -> tuple[bool, str]:
     """S7: decide whether one tool call the model asked for may run (and what to say if not)."""
-    return name in ALLOWED_TOOLS, ""
+    if name not in ALLOWED_TOOLS:
+        return False, f"tool {name} is not in ALLOWED_TOOLS"
+    return True, ""
 
 
 @asynccontextmanager

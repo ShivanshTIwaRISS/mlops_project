@@ -104,12 +104,59 @@ Metric = Literal["trip_count", "median_duration_min", "p90_duration_min"]
 
 @mcp.tool(description="Predict the duration in minutes of a yellow-taxi trip between two NYC TLC taxi zones, using the champion model.")
 async def predict_duration(pickup_zone: Zone, dropoff_zone: Zone, hour: Hour, day_of_week: Day) -> dict:
-    raise NotImplementedError("S7: predict_duration isn't built yet")
+    pzid = zone_id(pickup_zone)
+    dzid = zone_id(dropoff_zone)
+    dow = DAYS.index(day_of_week.lower())
+    body = {
+        "pickup_zone_id": pzid,
+        "dropoff_zone_id": dzid,
+        "pickup_hour": hour,
+        "pickup_dow": dow,
+    }
+    pred = await champion("POST", "/predict", body)
+    return {
+        "duration_minutes": pred["duration_minutes"],
+        "model": pred["model"],
+        "pickup_zone": pickup_zone,
+        "dropoff_zone": dropoff_zone,
+        "pickup_hour": hour,
+        "day_of_week": day_of_week,
+    }
 
 
 @mcp.tool(description="Historical trip statistics for one pickup zone from the zone_hour_stats mart.")
 def query_zone_stats(zone: Zone, metric: Metric, hour: Annotated[int | None, Field(ge=0, le=23, description="Optional: restrict to one pickup hour.")] = None) -> dict:
-    raise NotImplementedError("S7: query_zone_stats isn't built yet")
+    pzid = zone_id(zone)
+    if metric not in METRICS:
+        raise ValueError(f"unknown metric {metric!r}; must be one of {METRICS}")
+    wh = Warehouse()
+    if hour is not None:
+        rows = wh.query(
+            f"SELECT pickup_zone_id, zone, pickup_hour, {metric} FROM marts.zone_hour_stats WHERE pickup_zone_id = :pzid AND pickup_hour = :hour;",
+            {"pzid": pzid, "hour": hour},
+        )
+        if not rows:
+            raise ValueError(f"no stats found for zone {zone!r} at hour {hour}")
+        return {
+            "zone": rows[0]["zone"],
+            "pickup_zone_id": pzid,
+            "pickup_hour": hour,
+            "metric": metric,
+            "value": rows[0][metric],
+        }
+    else:
+        rows = wh.query(
+            f"SELECT pickup_zone_id, zone, pickup_hour, {metric} FROM marts.zone_hour_stats WHERE pickup_zone_id = :pzid ORDER BY pickup_hour;",
+            {"pzid": pzid},
+        )
+        if not rows:
+            raise ValueError(f"no stats found for zone {zone!r}")
+        return {
+            "zone": rows[0]["zone"],
+            "pickup_zone_id": pzid,
+            "metric": metric,
+            "stats": {r["pickup_hour"]: r[metric] for r in rows},
+        }
 
 
 @mcp.custom_route("/healthz", methods=["GET"])
