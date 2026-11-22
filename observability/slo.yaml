@@ -3,7 +3,34 @@
 # number, and the alert that tells you it's being missed.
 slos:
   - name: predict-availability
-    sli:
-    objective:
-    why:
-    alert:
+    sli: >
+      Fraction of POST /predict requests that return a non-5xx HTTP response.
+      Measured with lab_http_requests_total{route="/predict"} (contracts/metrics.yaml).
+    objective: 0.99
+    why: >
+      99% gives an error budget of ~7.3 h/month. That covers Learner Lab session gaps
+      (hosts stopped overnight), blue-green deploys (~30 s each), and model reloads.
+      99.9% (43 min/month) would breach every time the lab restarts; 95% is too loose
+      to catch a container crash within a reasonable window.
+    alert: >
+      PredictAvailabilityFastBurn (severity: page, 14.4× burn rate on 1h + 5m windows —
+      fires within ~1 h of a complete outage).
+      PredictAvailabilitySlowBurn (severity: ticket, 6× burn rate on 6h + 30m windows —
+      catches sustained 6% error rate before the budget is half gone).
+
+  - name: predict-latency
+    sli: >
+      Fraction of POST /predict requests completing within 500 ms, computed from the
+      lab_http_request_duration_seconds histogram (le="0.5"), contracts/metrics.yaml.
+      Equivalently: the error ratio is the fraction of requests that exceed 500 ms.
+    objective: 0.95
+    why: >
+      95% at 500 ms matches the app's latency budget from S3: the model itself takes
+      ~3.5 ms; Traefik routing and JSON serialisation add overhead. 500 ms is generous
+      enough to survive cold model loads (~2–3 s on first request) while being tight
+      enough to catch a stuck or OOM-killed serving container. p95 < 500 ms is consistent
+      with the lab_serving_request_duration_seconds contract (p95 target 50 ms plus the
+      app's own overhead).
+    alert: >
+      PredictLatencyFastBurn (severity: page, 14.4× burn rate on 1h + 5m windows —
+      fires within ~1 h if p95 is consistently above 500 ms).

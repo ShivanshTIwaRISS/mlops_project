@@ -61,3 +61,9 @@ module "wiki_secret" {
   source = "../modules/secret"
   name   = "lab/wiki"
 }
+
+module "grafana_secret" {
+  source      = "../modules/secret"
+  name        = "lab/grafana"
+  description = "Grafana Cloud credentials for Alloy remote-write (url, user, token). Value set out of band."
+}

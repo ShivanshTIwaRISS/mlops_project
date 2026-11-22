@@ -2,4 +2,112 @@
 # Prometheus rule format: https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/
 # Metric names are contracts/metrics.yaml's. `make check` runs promtool on this file and on any
 # *.test.yaml next to it.
-groups: []
+groups:
+  - name: predict_availability_recording
+    interval: 30s
+    rules:
+      # Error ratio over the four windows needed for multi-window burn-rate alerts.
+      # numerator: 5xx requests; denominator: all requests on /predict.
+      # Returns no data (not 0) when there is no traffic — alerts stay silent on idle.
+      - record: lab:predict_error_ratio:rate5m
+        expr: |
+          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[5m]))
+          /
+          sum(rate(lab_http_requests_total{route="/predict"}[5m]))
+
+      - record: lab:predict_error_ratio:rate30m
+        expr: |
+          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[30m]))
+          /
+          sum(rate(lab_http_requests_total{route="/predict"}[30m]))
+
+      - record: lab:predict_error_ratio:rate1h
+        expr: |
+          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[1h]))
+          /
+          sum(rate(lab_http_requests_total{route="/predict"}[1h]))
+
+      - record: lab:predict_error_ratio:rate6h
+        expr: |
+          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[6h]))
+          /
+          sum(rate(lab_http_requests_total{route="/predict"}[6h]))
+
+  - name: predict_latency_recording
+    interval: 30s
+    rules:
+      # Latency error ratio: fraction of /predict requests NOT completing within 500 ms.
+      # Uses the le="0.5" histogram bucket from contracts/metrics.yaml.
+      - record: lab:predict_latency_error_ratio:rate5m
+        expr: |
+          1 - (
+            sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.5"}[5m]))
+            /
+            sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[5m]))
+          )
+
+      - record: lab:predict_latency_error_ratio:rate1h
+        expr: |
+          1 - (
+            sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.5"}[1h]))
+            /
+            sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[1h]))
+          )
+
+  - name: slo_alerts
+    rules:
+      # --- Availability SLO: 99% (error budget = 1%) ---
+
+      # Fast burn: 14.4× budget rate on both 1h and 5m windows.
+      # A 100% outage triggers this in ~5 minutes (2m for: + scrape lag).
+      # Consumes 2% of the monthly error budget per hour at this rate.
+      - alert: PredictAvailabilityFastBurn
+        expr: |
+          lab:predict_error_ratio:rate5m  > (14.4 * 0.01)
+          and
+          lab:predict_error_ratio:rate1h  > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: page
+          slo: predict-availability
+        annotations:
+          summary: "predict availability fast burn ({{ $value | humanizePercentage }} error rate)"
+          description: >
+            14.4× budget consumed on /predict. Both the 5m and 1h error ratios exceed
+            14.4%. Page and investigate immediately.
+
+      # Slow burn: 6× budget rate on both 6h and 30m windows.
+      # Catches a 6% error rate that fast-burn would miss; fires before half the monthly budget is gone.
+      - alert: PredictAvailabilitySlowBurn
+        expr: |
+          lab:predict_error_ratio:rate30m > (6 * 0.01)
+          and
+          lab:predict_error_ratio:rate6h  > (6 * 0.01)
+        for: 15m
+        labels:
+          severity: ticket
+          slo: predict-availability
+        annotations:
+          summary: "predict availability slow burn ({{ $value | humanizePercentage }} error rate)"
+          description: >
+            6× budget consumed on /predict over 6h + 30m windows. Investigate before the
+            monthly error budget is exhausted.
+
+      # --- Latency SLO: 95% of requests within 500 ms (error budget = 5%) ---
+
+      # Fast burn: 14.4× budget rate on both 1h and 5m windows.
+      # Fires when p95 is consistently above 500 ms (latency error ratio > 72%).
+      - alert: PredictLatencyFastBurn
+        expr: |
+          lab:predict_latency_error_ratio:rate5m > (14.4 * 0.05)
+          and
+          lab:predict_latency_error_ratio:rate1h > (14.4 * 0.05)
+        for: 2m
+        labels:
+          severity: page
+          slo: predict-latency
+        annotations:
+          summary: "predict latency fast burn ({{ $value | humanizePercentage }} of requests over 500 ms)"
+          description: >
+            14.4× budget consumed for predict-latency. More than 72% of /predict requests
+            are taking over 500 ms. Check serving containers and model load times.

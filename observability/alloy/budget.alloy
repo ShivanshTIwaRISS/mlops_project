@@ -1,10 +1,9 @@
-// Your series budget (S5, decision 014). Every series from this host passes through one of these three
+// Series budget (S5, decision 014). Every series from this host passes through one of these three
 // before it's sent. Grafana Cloud's free tier allows 10,000 active series for all hosts together
 // (contracts/metrics.yaml). With no rules, everything is sent.
 //
-// Rules are Prometheus relabelling (https://grafana.com/docs/alloy/latest/reference/components/prometheus/prometheus.relabel/):
-//   rule { source_labels = ["__name__"]  regex = "node_(cpu|memory)_.*"  action = "keep" }
-//   rule { regex = "id"  action = "labeldrop" }
+// Rules are Prometheus relabelling:
+//   https://grafana.com/docs/alloy/latest/reference/components/prometheus/prometheus.relabel/
 
 declare "host" {
 	argument "forward_to" { }
@@ -12,7 +11,26 @@ declare "host" {
 	prometheus.relabel "rules" {
 		forward_to = argument.forward_to.value
 
-		// Your rules for the host's series: CPU? memory? disk? which network devices?
+		// Keep only the node_* groups used in dashboards and SLOs.
+		rule {
+			source_labels = ["__name__"]
+			regex         = "node_(cpu_seconds_total|memory_Mem(Available|Total)_bytes|filesystem_(avail|size)_bytes|load(1|5)|network_(receive|transmit)_bytes_total|uname_info)"
+			action        = "keep"
+		}
+		// Filesystem: drop virtual/overlay mounts; keep ext4/xfs on real devices.
+		rule {
+			source_labels = ["__name__", "fstype"]
+			separator     = ";"
+			regex         = "node_filesystem_.+;(tmpfs|devtmpfs|squashfs|overlay|proc)"
+			action        = "drop"
+		}
+		// Network: keep only the primary interface; drop loopback and virtual devices.
+		rule {
+			source_labels = ["__name__", "device"]
+			separator     = ";"
+			regex         = "node_network_.+;(lo|veth.+|docker.+|br-.+)"
+			action        = "drop"
+		}
 	}
 
 	export "receiver" {
@@ -26,7 +44,19 @@ declare "containers" {
 	prometheus.relabel "rules" {
 		forward_to = argument.forward_to.value
 
-		// Your rules for the containers' series: which metrics, and which labels change on every deploy?
+		// Keep only the two cAdvisor metrics used in dashboards (CPU and memory).
+		rule {
+			source_labels = ["__name__"]
+			regex         = "container_(cpu_usage_seconds_total|memory_working_set_bytes)"
+			action        = "keep"
+		}
+		// Drop labels that change on every deploy or container restart.
+		// `id` is the container ID hash (/docker/abc123…); `image` is the digest (sha256:…).
+		// Either would mint a new series on every push, blowing up the budget.
+		rule {
+			regex  = "^(id|image)$"
+			action = "labeldrop"
+		}
 	}
 
 	export "receiver" {
@@ -40,7 +70,21 @@ declare "services" {
 	prometheus.relabel "rules" {
 		forward_to = argument.forward_to.value
 
-		// Your rules for the services' series (contracts/metrics.yaml, Traefik, runtime metrics).
+		// Drop Go runtime and process metrics from all services.
+		// None appear in any dashboard panel or SLO rule (contracts/metrics.yaml).
+		rule {
+			source_labels = ["__name__"]
+			regex         = "(go|process)_.+"
+			action        = "drop"
+		}
+		// Traefik: drop internal config/router/middleware/entry metrics.
+		// Keep only traefik_service_* (used in the dashboard and S8 canary).
+		rule {
+			source_labels = ["__name__", "job"]
+			separator     = ";"
+			regex         = "traefik_(config|entrypoint|tls|router|middleware).+;traefik"
+			action        = "drop"
+		}
 	}
 
 	export "receiver" {

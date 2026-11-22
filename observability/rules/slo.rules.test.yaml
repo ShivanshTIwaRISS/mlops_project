@@ -1,0 +1,75 @@
+# promtool unit tests for slo.rules.yaml
+# Run with: promtool test rules slo.rules.test.yaml
+# Or via: make check  (which calls observability/push-rules.sh --check-only)
+#
+# Three scenarios:
+#   1. Complete outage  → PredictAvailabilityFastBurn fires.
+#   2. Short 3-min spike (10% errors) → fast burn does NOT fire (burn rate < 14.4×).
+#   3. All requests over 500 ms → PredictLatencyFastBurn fires.
+rule_files:
+  - slo.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # --- Scenario 1: 100% error rate → PredictAvailabilityFastBurn pages ---
+  - name: complete outage fires availability fast burn
+    interval: 1m
+    input_series:
+      # 10 requests/min, all 503; counter monotonically increases for 65 minutes.
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="503"}'
+        values: "0+10x65"
+      # Zero successful requests (counter stays at 0).
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="200"}'
+        values: "0x65"
+    alert_rule_test:
+      # At t=65m both rate5m and rate1h recording rules have data; for: 2m has elapsed.
+      - eval_time: 65m
+        alertname: PredictAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              slo: predict-availability
+            exp_annotations:
+              summary: "predict availability fast burn (100% error rate)"
+              description: "14.4× budget consumed on /predict. Both the 5m and 1h error ratios exceed 14.4%. Page and investigate immediately.\n"
+
+  # --- Scenario 2: 3-minute 10% error spike → fast burn does NOT fire ---
+  - name: short spike below burn threshold does not fire
+    interval: 1m
+    input_series:
+      # 10 req/min errors for 3 minutes, then stop.
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="503"}'
+        values: "0+10x3 30+0x62"
+      # 100 req/min successes throughout (10% error rate during spike).
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="200"}'
+        values: "0+100x65"
+    alert_rule_test:
+      # At t=10m: errors stopped at t=3m; rate5m error ratio is ~0 (well below 14.4%).
+      - eval_time: 10m
+        alertname: PredictAvailabilityFastBurn
+        exp_alerts: []
+
+  # --- Scenario 3: 100% of requests over 500 ms → PredictLatencyFastBurn pages ---
+  - name: all requests over 500ms fires latency fast burn
+    interval: 1m
+    input_series:
+      # le="0.5" bucket stays at 0: no requests complete within 500 ms.
+      - series: 'lab_http_request_duration_seconds_bucket{route="/predict",method="POST",le="0.5"}'
+        values: "0x65"
+      # +Inf bucket = total requests (10/min; all taking ~2 s each).
+      - series: 'lab_http_request_duration_seconds_bucket{route="/predict",method="POST",le="+Inf"}'
+        values: "0+10x65"
+      - series: 'lab_http_request_duration_seconds_count{route="/predict",method="POST"}'
+        values: "0+10x65"
+    alert_rule_test:
+      # At t=65m: latency_error_ratio = 1.0 > (14.4 * 0.05 = 0.72); for: 2m elapsed.
+      - eval_time: 65m
+        alertname: PredictLatencyFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              slo: predict-latency
+            exp_annotations:
+              summary: "predict latency fast burn (100% of requests over 500 ms)"
+              description: "14.4× budget consumed for predict-latency. More than 72% of /predict requests are taking over 500 ms. Check serving containers and model load times.\n"
