@@ -41,7 +41,7 @@ jobs:
 
       - name: Verify predict answers with champion
         run: |
-          for i in {1..20}; do
+          for _ in {1..20}; do
             resp=$(curl -fsS -H 'Content-Type: application/json' http://127.0.0.1/predict \
               -d '{"pickup_zone_id": 132, "dropoff_zone_id": 230, "pickup_datetime": "2024-03-08T17:05:00"}' || true)
             echo "Predict response: $resp"
