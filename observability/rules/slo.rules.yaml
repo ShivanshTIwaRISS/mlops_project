@@ -7,29 +7,46 @@ groups:
     interval: 30s
     rules:
       # Error ratio over the four windows needed for multi-window burn-rate alerts.
-      # numerator: 5xx requests; denominator: all requests on /predict.
+      # Counted as errors: HTTP 5xx responses AND fallback quotes (when serving is down
+      # or answers 503, the app answers HTTP 200 with static median 12.25 min).
       # Returns no data (not 0) when there is no traffic — alerts stay silent on idle.
       - record: lab:predict_error_ratio:rate5m
         expr: |
-          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[5m]))
+          (
+            (sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[5m])) or vector(0))
+            +
+            (sum(rate(lab_predictions_total{source="fallback"}[5m])) or vector(0))
+          )
           /
           sum(rate(lab_http_requests_total{route="/predict"}[5m]))
 
       - record: lab:predict_error_ratio:rate30m
         expr: |
-          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[30m]))
+          (
+            (sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[30m])) or vector(0))
+            +
+            (sum(rate(lab_predictions_total{source="fallback"}[30m])) or vector(0))
+          )
           /
           sum(rate(lab_http_requests_total{route="/predict"}[30m]))
 
       - record: lab:predict_error_ratio:rate1h
         expr: |
-          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[1h]))
+          (
+            (sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[1h])) or vector(0))
+            +
+            (sum(rate(lab_predictions_total{source="fallback"}[1h])) or vector(0))
+          )
           /
           sum(rate(lab_http_requests_total{route="/predict"}[1h]))
 
       - record: lab:predict_error_ratio:rate6h
         expr: |
-          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[6h]))
+          (
+            (sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[6h])) or vector(0))
+            +
+            (sum(rate(lab_predictions_total{source="fallback"}[6h])) or vector(0))
+          )
           /
           sum(rate(lab_http_requests_total{route="/predict"}[6h]))
 
