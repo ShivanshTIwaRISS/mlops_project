@@ -67,3 +67,9 @@ module "grafana_secret" {
   name        = "lab/grafana"
   description = "Grafana Cloud credentials for Alloy remote-write (url, user, token). Value set out of band."
 }
+
+module "langfuse_secret" {
+  source      = "../modules/secret"
+  name        = "lab/langfuse"
+  description = "Langfuse tracing credentials (host, public_key, secret_key). Value set out of band."
+}

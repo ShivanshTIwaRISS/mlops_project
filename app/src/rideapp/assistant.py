@@ -114,20 +114,64 @@ async def connect() -> psycopg.AsyncConnection:
                                                  password=s["password"], dbname="rag", autocommit=True, connect_timeout=5)
 
 
-TOP_K = 0  # decision 015
+TOP_K = 3  # decision 015
 
 
 async def retrieve(question_vector: list[float]) -> list[Chunk]:
-    """S6: the chunks closest to the question from rag.chunks (pgvector), best first. Until then: none."""
-    return []
+    """S6: the chunks closest to the question from rag.chunks (pgvector), best first."""
+    if TOP_K <= 0:
+        return []
+    v_str = vector_literal(question_vector)
+    try:
+        async with await connect() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT c.id, c.page_id, p.title, c.content,
+                           1 - (c.embedding <=> %s::vector) AS score
+                    FROM rag.chunks c
+                    JOIN rag.pages p ON p.id = c.page_id
+                    WHERE c.embedding IS NOT NULL
+                    ORDER BY c.embedding <=> %s::vector
+                    LIMIT %s;
+                    """,
+                    (v_str, v_str, TOP_K),
+                )
+                rows = await cur.fetchall()
+                return [
+                    Chunk(
+                        id=r[0],
+                        page_id=r[1],
+                        title=r[2],
+                        content=r[3],
+                        score=round(float(r[4]), 4),
+                    )
+                    for r in rows
+                ]
+    except Exception as e:
+        log.warning("retrieval failed: %s", e)
+        return []
 
 
-SYSTEM_PROMPT = "You are the support assistant of a New York ride-hailing app."
+SYSTEM_PROMPT = (
+    "You are the support assistant of a New York ride-hailing app. "
+    "Answer the rider's question clearly, concisely and accurately using only the provided ops wiki excerpts. "
+    "If the answer cannot be determined from the excerpts, state that clearly."
+)
 
 
 def build_messages(question: str, chunks: list[Chunk]) -> list[dict]:
-    """S6: the prompt. Until then the model answers from what it already knows (nothing about our wiki)."""
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}]
+    """S6: the prompt. Keep the system prompt fixed and put excerpts in user turn for prompt caching."""
+    if not chunks:
+        return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}]
+
+    context_parts = []
+    for c in chunks:
+        context_parts.append(f"--- {c.title} ---\n{c.content}")
+    context_text = "\n\n".join(context_parts)
+
+    user_content = f"Wiki policy context:\n{context_text}\n\nRider question: {question}"
+    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_content}]
 
 
 ALLOWED_TOOLS: set[str] = set()  # S7: which of the MCP server's tools the assistant may call

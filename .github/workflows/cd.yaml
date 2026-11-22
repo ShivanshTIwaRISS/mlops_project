@@ -25,6 +25,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      LLM_HOST: ${{ vars.LLM_HOST }}
     steps:
       - uses: actions/checkout@v7.0.1
 
